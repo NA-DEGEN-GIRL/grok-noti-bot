@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local secrets / runtime state
+.env
+.env.*
+*.env
+telegram_notify.env
+state.json
+notify.log
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
