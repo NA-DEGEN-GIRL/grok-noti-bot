@@ -36,13 +36,13 @@ hook_dest.chmod(0o600)
 PY
 
 cat <<EOF
-Installed Grok Telegram notifier:
+Installed Grok AI Worklog hook:
 - script: $SCRIPT_DEST
 - hook:   $HOOK_DEST
 
 Next steps:
 1. Copy examples/telegram_notify.env.example to ~/.grok/telegram_notify.env.
-2. Fill in your Telegram bot token and chat/account id locally.
+2. Fill in your Telegram bot token and forum supergroup chat id locally.
 3. Restart Grok Build or reload hooks in the TUI.
-4. Verify with: LLM_NOTI_DRY_RUN=1 grok -p "Reply exactly: hook dry run ok" --no-memory --disable-web-search --output-format json
+4. Verify with: ./scripts/smoke_test.sh
 EOF

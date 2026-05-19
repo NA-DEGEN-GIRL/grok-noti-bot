@@ -1,26 +1,44 @@
 # grok-noti-bot
 
-Telegram completion notifications for [Grok Build](https://x.ai/cli) using Grok's native `Stop` hook.
+Grok Build `Stop` hook that records each completed turn as an **AI Worklog** entry in a Telegram forum topic.
 
-This repository contains only the reusable notifier code, install helper, hook template, and example config. It does **not** include Telegram tokens, chat IDs, local session data, or machine-specific hook files.
+This replaces the old direct-message completion ping. The hook now writes the same project/session/nonce worklog format used by the Codex workflow:
+
+```text
+AI Worklog <agent> <project>
+user: <last user request summary>
+answer: <assistant result summary>
+changes: <hook/action summary>
+nonce: <per-turn nonce>
+session: <Grok session id>
+```
+
+Git state and changed files are stored in the local JSONL ledger by default, but are not shown in Telegram unless explicitly enabled.
 
 ## What it does
 
-When a Grok Build turn finishes, the global Grok `Stop` hook runs `telegram_notify.py`. The script sends a Telegram message with:
+When a Grok Build turn finishes, the global Grok `Stop` hook runs `telegram_notify.py`. The script:
 
-- a short completion summary
-- the current working directory
-- the Grok session id, when available
-- a `Grok 작업 완료` label so it is distinguishable from Codex or Claude notifications
+- derives user/assistant summaries from the Grok hook event or session files,
+- detects the git project from the hook CWD,
+- creates or reuses one Telegram forum topic per project,
+- sends a compact AI Worklog message to that topic,
+- appends the full record to a local JSONL ledger.
 
-The notifier is fail-open: hook failures are logged locally but do not block Grok.
+Runtime files are shared with the Codex AI Worklog setup:
+
+```text
+~/.local/state/codex-ai-worklog/worklog.jsonl
+~/.local/state/codex-ai-worklog/topics.json
+~/.local/state/codex-ai-worklog/grok_state.json
+```
 
 ## Files
 
 | Path | Purpose |
 | --- | --- |
-| `src/grok_telegram_notify.py` | Main hook script. |
-| `install.sh` | Installs the script and writes a user-local Grok hook config. |
+| `src/grok_telegram_notify.py` | Main Grok Stop-hook script. |
+| `install.sh` | Installs the script and writes the user-local Grok hook config. |
 | `hooks/telegram-notify.json.template` | Template for the Grok `Stop` hook. |
 | `examples/telegram_notify.env.example` | Safe placeholder config; copy locally and fill in secrets. |
 | `scripts/smoke_test.sh` | Dry-run test that does not send Telegram messages. |
@@ -28,9 +46,10 @@ The notifier is fail-open: hook failures are logged locally but do not block Gro
 ## Requirements
 
 - Linux/macOS shell environment
-- Python 3.10+
+- Python 3.10+ using only the standard library
 - Grok Build CLI installed and authenticated
-- Telegram bot token and chat/account id
+- Telegram bot added to a forum-enabled supergroup
+- Bot permission to create/manage topics if `AI_WORKLOG_AUTO_CREATE_TOPICS=true`
 
 ## Install
 
@@ -42,14 +61,16 @@ cd grok-noti-bot
 
 The installer writes:
 
-- `~/.grok/hooks/telegram_notify.py`
-- `~/.grok/hooks/telegram-notify.json`
+```text
+~/.grok/hooks/telegram_notify.py
+~/.grok/hooks/telegram-notify.json
+```
 
-Global Grok hooks under `~/.grok/hooks/` are personal hooks. Project hooks still require project trust in Grok.
+Restart Grok Build, or reload hooks in the TUI, after changing hook files.
 
-## Configure Telegram secrets locally
+## Configure
 
-Create a local config file from the example:
+Create a private env file:
 
 ```bash
 cp examples/telegram_notify.env.example ~/.grok/telegram_notify.env
@@ -57,30 +78,33 @@ chmod 600 ~/.grok/telegram_notify.env
 nano ~/.grok/telegram_notify.env
 ```
 
-Fill in:
+Minimal config:
 
-```dotenv
-LLM_NOTI_ENABLED=true
-TELEGRAM_LLM_NOTI_BOT_TOKEN=<YOUR_TELEGRAM_BOT_TOKEN>
-LLM_NOTI_OWNER_ACCOUNT_ID=<YOUR_TELEGRAM_CHAT_ID>
+```text
+AI_WORKLOG_BOT_TOKEN=<YOUR_TELEGRAM_BOT_TOKEN>
+AI_WORKLOG_CHAT_ID=<YOUR_FORUM_SUPERGROUP_CHAT_ID>
+AI_WORKLOG_AUTO_CREATE_TOPICS=true
+AI_WORKLOG_ENABLED=true
 ```
 
-Supported token variable names:
+The script also falls back to the shared Codex config path `~/.codex/telegram_notify.env`, so you can keep one shared AI Worklog bot/group config for Codex, Claude, and Grok.
 
-- `TELEGRAM_LLM_NOTI_BOT_TOKEN`
-- `LLM_NOTI_BOT_TOKEN`
-- `TELEGRAM_BOT_TOKEN`
-- `BOT_TOKEN`
+## Options
 
-Supported destination variable names:
+| Key | Default | Effect |
+| --- | --- | --- |
+| `AI_WORKLOG_BOT_TOKEN` | fallback token aliases | Telegram bot token. |
+| `AI_WORKLOG_CHAT_ID` | — | Forum supergroup chat id. |
+| `AI_WORKLOG_AUTO_CREATE_TOPICS` | `true` | Create missing project topics automatically. |
+| `AI_WORKLOG_TOPIC_ID` | — | Force all messages into one known topic. |
+| `AI_WORKLOG_ENABLED` | `true` | Set `false` to disable the hook without removing it. |
+| `AI_WORKLOG_DRY_RUN` / `LLM_NOTI_DRY_RUN` | `false` | Write local state without Telegram send. |
+| `AI_WORKLOG_SHOW_AGENT` | `true` | Show `Grok` in the Telegram header. |
+| `AI_WORKLOG_SHOW_GIT` | `false` | Also show git branch/head in Telegram. |
+| `AI_WORKLOG_SHOW_FILES` | `false` | Also show changed files in Telegram. |
+| `AI_WORKLOG_TOPIC_MAP` | shared local path | Override project-to-topic cache path. |
 
-- `OWNER_ACCOUNT_ID`
-- `TELEGRAM_OWNER_ACCOUNT_ID`
-- `LLM_NOTI_OWNER_ACCOUNT_ID`
-- `TELEGRAM_CHAT_ID`
-- `CHAT_ID`
-
-Never commit your real `telegram_notify.env` or `.env` file.
+Token fallback aliases are supported for compatibility: `TELEGRAM_LLM_NOTI_BOT_TOKEN`, `LLM_NOTI_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, `BOT_TOKEN`.
 
 ## Verify without sending a Telegram message
 
@@ -88,44 +112,30 @@ Never commit your real `telegram_notify.env` or `.env` file.
 ./scripts/smoke_test.sh
 ```
 
-Or run Grok with dry-run enabled:
+Expected state:
 
 ```bash
-LLM_NOTI_DRY_RUN=1 grok -p "Reply exactly: hook dry run ok" --no-memory --disable-web-search --output-format json
-cat ~/.local/state/grok-telegram-notify/state.json
+cat ~/.local/state/codex-ai-worklog/grok_state.json
 ```
 
-Expected state includes:
-
-- `mode: stop-hook`
-- `last_send_ok: true`
-- `dry_run: true`
-- `session_id: ...`
+The dry-run state should include `mode: stop-hook`, `last_send_ok: true`, and `telegram_status: dry_run`.
 
 ## Verify with a real Telegram message
 
-After configuring real secrets:
+After configuring the bot/group:
 
 ```bash
-grok -p "Reply exactly: grok notify real test ok" --no-memory --disable-web-search --output-format json
-cat ~/.local/state/grok-telegram-notify/state.json
+python3 ~/.grok/hooks/telegram_notify.py --test --summary "Grok AI Worklog real test"
+cat ~/.local/state/codex-ai-worklog/grok_state.json
 ```
 
 `last_send_ok: true` means the Telegram API request succeeded.
 
-## Disable temporarily
-
-Set either value in your local env file:
-
-```dotenv
-LLM_NOTI_ENABLED=false
-# or
-LLM_NOTI_DISABLED=true
-```
-
 ## Security notes
 
 - The repository intentionally contains no real credentials.
-- Runtime state is written under `~/.local/state/grok-telegram-notify/`.
-- The script logs failure class names, not Telegram secrets.
-- Keep `~/.grok/telegram_notify.env` mode `600` when possible.
+- Never commit real env files, bot tokens, chat ids, account ids, or Telegram state.
+- Anyone who can read the Telegram forum topic can read the summaries.
+- Runtime state is written under `~/.local/state/codex-ai-worklog/`.
+- The script logs failure class names and sanitized messages only.
+- Hook failures exit 0 in normal Stop-hook mode so Grok is not blocked.
